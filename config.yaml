@@ -1,0 +1,26 @@
+entity: qhyccd_filter_wheel
+server:
+  host: 0.0.0.0
+  port: 5800
+log_level: INFO
+devices:
+  - entity: QHYCFW3XL_1
+    device_number: 0
+    serial_port: /dev/ttyUSB1
+    names:
+      - OPEN
+      - JOHNSON_R
+      - 30_LPMM
+      - 35_LPMM
+      - 75_LPMM
+      - BLOCK
+      - OPEN
+    focus_offsets:
+      - 0
+      - 0
+      - 0
+      - 0
+      - 0
+      - 0
+      - 0
+    timeout: 60
