@@ -34,7 +34,11 @@ class FilterWheelDevice:
     # ASCOM Methods Common To All Devices #
     #######################################
     def connect(self):
-        """Establish serial connection, wait for home."""
+        """Kick off an async connect: open serial, then home in a background thread.
+
+        Per IConnectV2, `connecting` stays True and `connected` stays False until
+        homing completes; only then does `connected` flip to True.
+        """
         if self._connecting or self._connected:
             return
 
@@ -48,17 +52,32 @@ class FilterWheelDevice:
                 stopbits=serial.STOPBITS_ONE,
                 timeout=1,
             )
+        except Exception as e:
+            logger.error(f"Connection error opening serial: {e}")
+            self._connecting = False
+            self._connected = False
+            raise
 
-            # Filter wheel homes when first powered and when first connected
-            self._moving = True
-            threading.Thread(target=self._moving_timer, args=(0,), daemon=True).start()
+        # Filter wheel homes when first powered and when first connected.
+        # The homing thread is responsible for flipping both _connected and _connecting.
+        self._moving = True
+        threading.Thread(target=self._connect_home, args=(0,), daemon=True).start()
 
+    def _connect_home(self, target: int):
+        """Background thread: run the initial home, then mark the device connected."""
+        try:
+            self._moving_timer(target)
             self._connected = True
             logger.info(f"Connected to filter wheel: {self._config.entity}")
         except Exception as e:
-            logger.error(f"Connection error: {e}")
+            logger.error(f"Homing failed during connect: {e}")
             self._connected = False
-            raise
+            if self._serial and self._serial.is_open:
+                try:
+                    self._serial.close()
+                except Exception:
+                    pass
+            self._serial = None
         finally:
             self._connecting = False
 
@@ -86,6 +105,9 @@ class FilterWheelDevice:
         self._serial = None
         logger.info(f"Disconnected from filter wheel: {self._config.entity}")
 
+    @property
+    def entity(self) -> str:
+        return self._config.entity
 
     ###########################
     # IFilterWheel properties #
@@ -124,9 +146,17 @@ class FilterWheelDevice:
 
         self._moving = True
         time.sleep(1)
-        threading.Thread(target=self._moving_timer, args=(value,), daemon=True).start()
+        threading.Thread(target=self._run_move, args=(value,), daemon=True).start()
 
         logger.info(f"Moving to position {value}")
+
+    def _run_move(self, target: int):
+        """Background thread wrapper around _moving_timer that logs failures."""
+        try:
+            self._moving_timer(target)
+        except Exception as e:
+            logger.error(f"Move to position {target} failed: {e}")
+            self._moving = False
 
     @property
     def timestamp(self) -> str:

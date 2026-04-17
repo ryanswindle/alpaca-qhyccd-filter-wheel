@@ -85,6 +85,7 @@ python test.py
 ```bash
 docker build -t alpaca-qhyccd-filter-wheel .
 docker run -d --name alpaca-qhyccd-filter-wheel \
+    -v ./config.yaml:/alpyca/config.yaml:ro \
     --network host \
     --device /dev/ttyUSB1 \
     --restart unless-stopped \

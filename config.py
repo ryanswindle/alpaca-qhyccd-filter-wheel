@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 def _load_yaml_configs() -> dict:
     """Load config.yaml with optional docker override."""
+
     base_config = {}
     override_config = {}
 
@@ -34,11 +35,12 @@ def _load_yaml_configs() -> dict:
 
 class DeviceConfig(BaseModel):
     """Configuration for a single QHYCCD filter wheel."""
+
     entity: str = Field(default="Filter Wheel")
     device_number: int = Field(default=0)
     serial_port: str = Field(default="/dev/ttyUSB1")
     names: List[str] = Field(
-        default_factory=lambda: ["OPEN", "JOHNSON_R", "30_LPMM", "35_LPMM", "75_LPMM", "BLOCK", "OPEN"]
+        default_factory=lambda: ["Filter 1", "Filter 2", "Filter 3", "Filter 4", "Filter 5", "Filter 6", "Filter 7"]
     )
     focus_offsets: List[int] = Field(
         default_factory=lambda: [0, 0, 0, 0, 0, 0, 0]
