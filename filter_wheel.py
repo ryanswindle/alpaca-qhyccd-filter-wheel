@@ -1,4 +1,3 @@
-import asyncio
 from typing import Annotated, Dict
 
 from fastapi import APIRouter, Depends, Form, HTTPException
@@ -128,15 +127,6 @@ async def connected_put(devnum: int, Connected: Annotated[str, Form()], params: 
     conn = to_bool(Connected)
     try:
         device.connected = conn
-        # Legacy `Connected` property is synchronous per ASCOM; block until the
-        # background homing thread finishes before responding.
-        if conn:
-            ok = await asyncio.to_thread(device.wait_until_connected)
-            if not ok:
-                return MethodResponse.create(
-                    client_transaction_id=params.client_transaction_id,
-                    error=DriverException(0x500, "FilterWheel.Connected failed: homing did not complete"),
-                ).model_dump()
         return MethodResponse.create(
             client_transaction_id=params.client_transaction_id,
         ).model_dump()
@@ -253,67 +243,19 @@ async def supportedactions(devnum: int, params: AlpacaGetParams = Depends()):
 @router.get("/{devnum}/focusoffsets", summary="")
 async def focusoffsets(devnum: int, params: AlpacaGetParams = Depends()):
     device = get_device(devnum)
-    if not device.connected:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=NotConnectedException(),
-        ).model_dump()
-    try:
-        return PropertyResponse.create(
-            value=device.focus_offsets,
-            client_transaction_id=params.client_transaction_id,
-        ).model_dump()
-    except Exception as ex:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=DriverException(0x500, "FilterWheel.FocusOffsets failed", ex),
-        ).model_dump()
+    return _connected_property(device, device.focus_offsets, params)
 
 
 @router.get("/{devnum}/names", summary="")
 async def names(devnum: int, params: AlpacaGetParams = Depends()):
     device = get_device(devnum)
-    if not device.connected:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=NotConnectedException(),
-        ).model_dump()
-    try:
-        return PropertyResponse.create(
-            value=device.names,
-            client_transaction_id=params.client_transaction_id,
-        ).model_dump()
-    except Exception as ex:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=DriverException(0x500, "FilterWheel.Names failed", ex),
-        ).model_dump()
+    return _connected_property(device, device.names, params)
 
 
 @router.get("/{devnum}/position", summary="")
 async def position_get(devnum: int, params: AlpacaGetParams = Depends()):
     device = get_device(devnum)
-    if not device.connected:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=NotConnectedException(),
-        ).model_dump()
-    try:
-        return PropertyResponse.create(
-            value=device.position,
-            client_transaction_id=params.client_transaction_id,
-        ).model_dump()
-    except Exception as ex:
-        return PropertyResponse.create(
-            value=None,
-            client_transaction_id=params.client_transaction_id,
-            error=DriverException(0x500, "FilterWheel.Position failed", ex),
-        ).model_dump()
+    return _connected_property(device, device.position, params)
 
 
 @router.put("/{devnum}/position", summary="")

@@ -9,19 +9,16 @@ fw = FilterWheel(f"{config.server.host}:{config.server.port}", 0)
 print(f"  Name:   {fw.Name}")
 print(f"  Driver: {fw.DriverVersion}\n")
 
-# Connect
+# Connect (server returns immediately; poll Connected until homing finishes)
 print("Connecting...")
 fw.Connected = True
-print(f"  Connected: {fw.Connected}")
-
-# Wait for initial homing
-print("\nWaiting for initial homing...")
 t0 = time.time()
-while fw.Position == -1:
-    time.sleep(1)
-    if (time.time() - t0) > 60:
-        print("  Timed out waiting for homing")
+while not fw.Connected:
+    time.sleep(0.1)
+    if (time.time() - t0) > 300:
+        print("  Timed out waiting for connect/homing")
         break
+print(f"  Connected: {fw.Connected}")
 print(f"  Position: {fw.Position}")
 
 # Filter names and focus offsets
