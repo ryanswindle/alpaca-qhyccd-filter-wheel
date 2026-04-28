@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 
 from exceptions import (
     DriverException,
+    InvalidOperationException,
     InvalidValueException,
     NotConnectedException,
     NotImplementedException,
 )
-from filter_wheel_device import FilterWheelDevice
+from filter_wheel_device import FilterWheelDevice, FilterWheelBusyError
 from log import get_logger
 from responses import MethodResponse, PropertyResponse, StateValue
 from shr import AlpacaGetParams, AlpacaPutParams, to_bool
@@ -335,6 +336,11 @@ async def position_put(devnum: int, Position: Annotated[str, Form()], params: Al
         device.position = pos
         return MethodResponse.create(
             client_transaction_id=params.client_transaction_id,
+        ).model_dump()
+    except FilterWheelBusyError as ex:
+        return MethodResponse.create(
+            client_transaction_id=params.client_transaction_id,
+            error=InvalidOperationException(str(ex)),
         ).model_dump()
     except Exception as ex:
         return MethodResponse.create(

@@ -11,6 +11,10 @@ from log import get_logger
 logger = get_logger()
 
 
+class FilterWheelBusyError(RuntimeError):
+    """Raised when a command is rejected because the wheel is currently moving."""
+
+
 class FilterWheelDevice:
     """Low-level driver for the QHYCCD filter wheel."""
 
@@ -23,8 +27,10 @@ class FilterWheelDevice:
 
         # Connection state
         self._serial: serial.Serial | None = None
+        self._serial_lock = threading.Lock()
         self._connected = False
         self._connecting = False
+        self._aborting = False
 
         # Motion tracking
         self._moving = False
@@ -67,6 +73,9 @@ class FilterWheelDevice:
         """Background thread: run the initial home, then mark the device connected."""
         try:
             self._moving_timer(target)
+            if self._aborting:
+                # disconnect() asked us to stop; do not flip _connected to True
+                return
             self._connected = True
             logger.info(f"Connected to filter wheel: {self._config.entity}")
         except Exception as e:
@@ -97,12 +106,25 @@ class FilterWheelDevice:
         return self._connecting
 
     def disconnect(self):
-        """Close serial connection."""
+        """Close serial connection.
+
+        If a connect is in progress, signal it to abort and wait briefly so the
+        background homing thread cannot flip ``_connected`` back to True after
+        we return.
+        """
+        if self._connecting:
+            self._aborting = True
+            self._moving = False  # break _moving_timer's polling loop
+            deadline = time.time() + 5
+            while self._connecting and time.time() < deadline:
+                time.sleep(0.05)
+
         if self._serial and self._serial.is_open:
             self._serial.close()
 
         self._connected = False
         self._serial = None
+        self._aborting = False
         logger.info(f"Disconnected from filter wheel: {self._config.entity}")
 
     @property
@@ -129,17 +151,23 @@ class FilterWheelDevice:
 
     @position.setter
     def position(self, value: int):
-        """Command the wheel to move to *value* (0–6)."""
+        """Command the wheel to move to *value* (0–9; protocol writes one ASCII digit)."""
         if not self._serial or not self._serial.is_open:
             raise RuntimeError("Not connected to filter wheel")
 
+        # The QHYCCD protocol is a single ASCII digit; multi-byte writes would corrupt it.
+        if not 0 <= value <= 9:
+            raise ValueError(
+                f"Position {value} out of single-digit range (0-9) for QHYCCD protocol"
+            )
+
         # If the position is set too early (during a move), the controller gets stuck
         if self._moving:
-            logger.warning("Filter wheel is currently moving, try again later")
-            return
+            raise FilterWheelBusyError("Filter wheel is currently moving")
 
         try:
-            self._serial.write(f"{value}".encode())
+            with self._serial_lock:
+                self._serial.write(f"{value}".encode())
         except Exception as e:
             logger.error(f"Failed to set position: {e}")
             raise
@@ -183,9 +211,10 @@ class FilterWheelDevice:
 
         while True:
             try:
-                time.sleep(1)
-                self._serial.write(b"NOW")
-                out = self._serial.read()
+                with self._serial_lock:
+                    self._serial.reset_input_buffer()
+                    self._serial.write(b"NOW")
+                    out = self._serial.read()
 
                 if out == b"":
                     empty_count += 1
