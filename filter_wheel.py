@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Dict
 
 from fastapi import APIRouter, Depends, Form, HTTPException
@@ -127,6 +128,15 @@ async def connected_put(devnum: int, Connected: Annotated[str, Form()], params: 
     conn = to_bool(Connected)
     try:
         device.connected = conn
+        # Legacy `Connected` property is synchronous per ASCOM; block until the
+        # background homing thread finishes before responding.
+        if conn:
+            ok = await asyncio.to_thread(device.wait_until_connected)
+            if not ok:
+                return MethodResponse.create(
+                    client_transaction_id=params.client_transaction_id,
+                    error=DriverException(0x500, "FilterWheel.Connected failed: homing did not complete"),
+                ).model_dump()
         return MethodResponse.create(
             client_transaction_id=params.client_transaction_id,
         ).model_dump()

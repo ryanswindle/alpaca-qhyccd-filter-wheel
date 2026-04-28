@@ -105,6 +105,17 @@ class FilterWheelDevice:
     def connecting(self) -> bool:
         return self._connecting
 
+    def wait_until_connected(self) -> bool:
+        """Block until any in-flight connect attempt finishes.
+
+        Used by the legacy `Connected = True` property setter, which must be
+        synchronous per ASCOM. Returns the final ``_connected`` state.
+        """
+        deadline = time.time() + self._timeout + 10
+        while self._connecting and time.time() < deadline:
+            time.sleep(0.05)
+        return self._connected
+
     def disconnect(self):
         """Close serial connection.
 
