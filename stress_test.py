@@ -1,9 +1,14 @@
 """
 Long-running stress test for the QHYCCD filter wheel.
 
-Mirrors Otto's observed pattern: cycles the filters [2, 3, 4, 6] back-to-back
-with a configurable inter-move delay (defaults to ~5 s — much faster than
-Otto's 30 s exposure cycle, so a failure burst surfaces sooner).
+Mirrors what sensorkit's alpaca filter-wheel client does:
+  - Connect via the IConnectV2 path (Connect() + poll Connecting until cleared),
+    matching sensorkit/alpaca/device.py.
+  - Background status loop polls Connected and Position every
+    STATUS_POLL_INTERVAL seconds regardless of move state, matching
+    AlpacaFilterWheel.status_publish.
+  - Move sequence cycles [2, 3, 4, 6] with a 5 s inter-move delay — faster
+    than Otto's exposure-driven cadence so a failure burst surfaces sooner.
 
 For each move it records whether the wheel reached the commanded position
 within MOVE_TIMEOUT, and prints a one-line outcome plus a rolling summary
@@ -18,6 +23,7 @@ Ctrl-C to stop; a final summary is printed.
 
 import signal
 import sys
+import threading
 import time
 
 from alpaca.filterwheel import FilterWheel
@@ -25,8 +31,9 @@ from config import config
 
 
 SEQUENCE = [2, 3, 4, 6]
-MOVE_TIMEOUT = 75      # a bit longer than the device's 60 s internal timeout
-INTER_MOVE_DELAY = 5   # seconds between completing a move and issuing the next
+MOVE_TIMEOUT = 75             # a bit longer than the device's 60 s internal timeout
+INTER_MOVE_DELAY = 5          # seconds between completing a move and issuing the next
+STATUS_POLL_INTERVAL = 5      # background Connected/Position poll cadence (mirrors Otto)
 SUMMARY_EVERY = 20
 
 
@@ -57,13 +64,30 @@ def main():
     fw = FilterWheel(f"{config.server.host}:{config.server.port}", 0)
 
     print(f"[{now()}] Connecting to {config.server.host}:{config.server.port}...")
-    fw.Connected = True
+    fw.Connect()
     t0 = time.time()
-    while not fw.Connected:
-        time.sleep(0.1)
+    while fw.Connecting:
+        time.sleep(0.5)
         if time.time() - t0 > 300:
             raise RuntimeError("Connect/homing timed out after 300 s")
+    if not fw.Connected:
+        raise RuntimeError("Connecting cleared but Connected is False")
     print(f"[{now()}] Connected. Initial position = {fw.Position}")
+
+    # Background status loop: polls Connected and Position every
+    # STATUS_POLL_INTERVAL seconds regardless of move state, mirroring Otto's
+    # status_publish so we generate a comparable NOW-traffic pattern.
+    status_stop = threading.Event()
+
+    def status_loop():
+        while not status_stop.wait(STATUS_POLL_INTERVAL):
+            try:
+                if fw.Connected:
+                    _ = fw.Position
+            except Exception:
+                pass
+
+    threading.Thread(target=status_loop, daemon=True).start()
 
     stats = {"moves": 0, "ok": 0, "timeout": 0, "wrong_pos": 0, "rejected": 0}
     started = time.time()
@@ -78,9 +102,13 @@ def main():
 
     def shutdown(signum, frame):
         print()
+        status_stop.set()
         print_summary("FINAL")
         try:
-            fw.Connected = False
+            fw.Disconnect()
+            t0 = time.time()
+            while fw.Connecting and time.time() - t0 < 30:
+                time.sleep(0.5)
         except Exception:
             pass
         sys.exit(0)
@@ -121,9 +149,10 @@ def main():
 
                 time.sleep(INTER_MOVE_DELAY)
     finally:
+        status_stop.set()
         print_summary("FINAL")
         try:
-            fw.Connected = False
+            fw.Disconnect()
         except Exception:
             pass
 
