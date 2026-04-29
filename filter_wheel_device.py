@@ -197,11 +197,13 @@ class FilterWheelDevice:
     def _read_position(self) -> int:
         """Query the filter wheel for its current position.
 
-        Sends 'NOW' and reads a single byte back.  Returns the position
-        as an integer (0–6), or -1 if the position cannot be determined
-        (e.g. wheel is mid-travel or communication fails).
+        Sends 'NOW' and reads the wheel's response (up to whatever it sends
+        back). Returns the trailing ASCII digit as an integer (0–9), or -1
+        if the response is empty/garbage. Retries up to 3 times on empties.
 
-        Retries up to 3 times on empty responses before giving up.
+        Logs at WARNING when something diagnostic-worthy happens (stale bytes
+        in the input buffer before flush, multi-byte response, non-digit
+        response). Normal single-byte responses log at DEBUG only.
         """
         if not self._serial or not self._serial.is_open:
             logger.error("Serial port not open")
@@ -212,22 +214,35 @@ class FilterWheelDevice:
         while True:
             try:
                 with self._serial_lock:
+                    stale = self._serial.in_waiting
                     self._serial.reset_input_buffer()
                     self._serial.write(b"NOW")
-                    out = self._serial.read()
+                    first = self._serial.read(1)
+                    extra = self._serial.read_all() or b""
 
-                if out == b"":
+                out = first + extra
+
+                if stale or len(out) > 1:
+                    logger.warning(f"NOW diag: stale={stale} bytes={out!r}")
+                else:
+                    logger.debug(f"NOW diag: stale={stale} bytes={out!r}")
+
+                if not out:
                     empty_count += 1
                     if empty_count >= 3:
+                        logger.warning("NOW returned empty 3 times in a row")
                         return -1
                     continue
-                else:
-                    empty_count = 0
 
-                return int(out.decode())
+                empty_count = 0
 
-            except (TypeError, ValueError):
-                return -1
+                digits = [b for b in out if 0x30 <= b <= 0x39]
+                if not digits:
+                    logger.warning(f"NOW returned no digit: {out!r}")
+                    return -1
+
+                return digits[-1] - 0x30
+
             except Exception as e:
                 logger.error(f"Failed to read position: {e}")
                 raise
