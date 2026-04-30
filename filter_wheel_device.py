@@ -35,6 +35,11 @@ class FilterWheelDevice:
         # Motion tracking
         self._moving = False
 
+        # Recovery: timestamp of the first _read_position failure in the
+        # current streak. Cleared on any successful read; if it persists
+        # for longer than self._timeout we close+reopen the serial port.
+        self._first_read_failure_time: float | None = None
+
 
     #######################################
     # ASCOM Methods Common To All Devices #
@@ -237,6 +242,7 @@ class FilterWheelDevice:
                         # (especially pos-6 → pos-2). _moving_timer just keeps
                         # polling, so this is recoverable; logged for visibility.
                         logger.debug("NOW returned empty 3 times in a row")
+                        self._on_read_failure()
                         return -1
                     continue
 
@@ -245,12 +251,70 @@ class FilterWheelDevice:
                 digits = [b for b in out if 0x30 <= b <= 0x39]
                 if not digits:
                     logger.warning(f"NOW returned no digit: {out!r}")
+                    self._on_read_failure()
                     return -1
 
+                self._first_read_failure_time = None
                 return digits[-1] - 0x30
 
             except Exception as e:
                 logger.error(f"Failed to read position: {e}")
+                raise
+
+    def _on_read_failure(self):
+        """Track sustained NOW-read failures and reopen the serial port.
+
+        Suppressed during initial connect (cold-start has its own ~12-16 s
+        of empty-3x cycles before the wheel wakes up). Once connected, if
+        _read_position has been failing continuously for longer than
+        self._timeout, close+reopen the serial port to recover from chip-
+        or firmware-level stuck states. Empirically a docker restart fixes
+        these; close+reopen at the kernel layer does the same thing.
+        """
+        if self._connecting:
+            return
+        now = time.time()
+        if self._first_read_failure_time is None:
+            self._first_read_failure_time = now
+            return
+        if now - self._first_read_failure_time > self._timeout:
+            self._first_read_failure_time = None
+            try:
+                self._reopen_serial()
+            except Exception as e:
+                logger.error(f"Reopen recovery failed: {e}")
+
+    def _reopen_serial(self):
+        """Close and reopen the serial port to recover from a stuck state.
+
+        The wheel firmware re-homes on a fresh open, so the move that was
+        in flight when we triggered will likely time out (current==0,
+        target!=0); subsequent moves resume normally.
+        """
+        logger.warning(
+            f"Reopening {self._config.serial_port} after >{self._timeout} s "
+            f"of silent NOW reads"
+        )
+        with self._serial_lock:
+            try:
+                if self._serial and self._serial.is_open:
+                    self._serial.close()
+            except Exception as e:
+                logger.warning(f"Error closing serial during reopen: {e}")
+
+            try:
+                self._serial = serial.Serial(
+                    port=self._config.serial_port,
+                    baudrate=self._baudrate,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=1,
+                )
+                logger.info(f"Reopened {self._config.serial_port}")
+            except Exception as e:
+                logger.error(f"Failed to reopen serial port: {e}")
+                self._serial = None
                 raise
 
     def _moving_timer(self, target: int):
