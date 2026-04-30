@@ -222,7 +222,10 @@ class FilterWheelDevice:
 
                 out = first + extra
 
-                if stale or len(out) > 1:
+                # stale=1 with a single-byte response is the wheel echoing the
+                # last position write; benign and universal. Anything beyond
+                # that (extra stale bytes, multi-byte response) is worth a look.
+                if stale > 1 or len(out) > 1:
                     logger.warning(f"NOW diag: stale={stale} bytes={out!r}")
                 else:
                     logger.debug(f"NOW diag: stale={stale} bytes={out!r}")
@@ -230,7 +233,10 @@ class FilterWheelDevice:
                 if not out:
                     empty_count += 1
                     if empty_count >= 3:
-                        logger.warning("NOW returned empty 3 times in a row")
+                        # Wheel needs >3 s to respond after some long moves
+                        # (especially pos-6 → pos-2). _moving_timer just keeps
+                        # polling, so this is recoverable; logged for visibility.
+                        logger.debug("NOW returned empty 3 times in a row")
                         return -1
                     continue
 
