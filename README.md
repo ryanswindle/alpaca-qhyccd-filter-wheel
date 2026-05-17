@@ -92,3 +92,18 @@ docker run -d --name alpaca-qhyccd-filter-wheel \
     alpaca-qhyccd-filter-wheel
 docker logs -f alpaca-qhyccd-filter-wheel
 ```
+
+---
+
+## ASCOM Conformance
+
+<!-- conformu:start -->
+Last tested with **ConformU 4.3.0 (Build 49708.0503dc7)** on 2026-05-16
+(`python test_conformu.py`):
+
+| Device | Errors | Issues | Info | Status |
+|--------|:------:|:------:|:----:|:------:|
+| QHYCFW3XL_1 (Filter Wheel #0) | 1 | 0 | 45 | ✓ PASS |
+
+_Errors may be non-zero when no hardware is attached (NotConnectedException is the expected response). **Issues == 0** indicates Alpaca protocol conformance._
+<!-- conformu:end -->
